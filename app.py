@@ -209,7 +209,12 @@ if page == "Home":
 elif page == "PDF to MCQ":
     st.header("📄 PDF to MCQ")
     pdf = st.file_uploader("Choose a text-based PDF", type=["pdf"])
-    count = st.slider("Questions to generate", 5, 30, 10)
+    count = st.slider(
+    "Number of MCQs",
+    min_value=120,
+    max_value=500,
+    value=620
+    )
 
     if st.button("Generate MCQs", disabled=(pdf is None)):
         try:
