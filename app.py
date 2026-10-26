@@ -1,9 +1,131 @@
-import streamlit as st
+import re
+import random
 import pandas as pd
-
+import streamlit as st
+from pypdf import PdfReader
+streamlit
+pandas
+pypdf
 st.set_page_config(page_title="My Exam Preparation", layout="wide")
 
-st.title("📚 My Exam Preparation")
+st.title 
+def generate_mcqs(pdf_file, limit=10):
+    reader = PdfReader(pdf_file)
+    text = "\n".join(
+        page.extract_text() or ""
+        for page in reader.pages
+    )
+
+    # Split extracted text into sentences.
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
+
+    # Candidate answers: dates, numbers, and capitalized names.
+    candidates = re.compile(
+        r"\b(?:"
+        r"\d{4}"
+        r"|\d+(?:\.\d+)?%?"
+        r"|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}"
+        r")\b"
+    )
+
+    facts = []
+
+    for sentence in sentences:
+        sentence = " ".join(sentence.split())
+
+        if len(sentence) < 30 or len(sentence) > 350:
+            continue
+
+        matches = list(candidates.finditer(sentence))
+
+        for match in matches:
+            answer = match.group().strip()
+
+            # Ignore very short or common sentence-start words.
+            if answer.lower() in {
+                "the", "this", "that", "these", "those",
+                "when", "where", "which", "there", "however"
+            }:
+                continue
+
+            if len(answer) < 2:
+                continue
+
+            question = (
+                sentence[:match.start()]
+                + "________"
+                + sentence[match.end():]
+            )
+
+            # Avoid questions that become empty or too short.
+            if len(question) < 20:
+                continue
+
+            facts.append({
+                "question": question,
+                "answer": answer
+            })
+
+    # Remove duplicate question-answer pairs.
+    unique = []
+    seen = set()
+
+    for fact in facts:
+        key = (
+            fact["question"].lower(),
+            fact["answer"].lower()
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(fact)
+
+    if len(unique) < 2:
+        return []
+
+    # Use other extracted answers as distractors.
+    answer_pool = list({
+        fact["answer"] for fact in unique
+    })
+
+    random.shuffle(unique)
+    mcqs = []
+
+    for fact in unique:
+        wrong = [
+            item for item in answer_pool
+            if item.lower() != fact["answer"].lower()
+        ]
+
+        if len(wrong) < 3:
+            continue
+
+        options = random.sample(wrong, 3)
+        options.append(fact["answer"])
+        random.shuffle(options)
+
+        labels = ["A", "B", "C", "D"]
+        correct = labels[options.index(fact["answer"])]
+
+        mcqs.append({
+            "question": fact["question"],
+            "A": options[0],
+            "B": options[1],
+            "C": options[2],
+            "D": options[3],
+            "answer": correct,
+            "explanation": (
+                "The answer is based on the extracted "
+                "sentence: " + fact["question"].replace(
+                    "________", fact["answer"]
+                )
+            )
+        })
+
+        if len(mcqs) >= limit:
+            break
+
+    return mcqs
+    ("📚 My Exam Preparation")
 st.write("SSC CPO | SSC CGL | RRB NTPC | IB ACIO | CAPF AC")
 
 st.sidebar.title("Menu")
@@ -17,8 +139,93 @@ if page == "Home":
     st.write("Upload your question bank to start practising.")
     st.write("You can add questions for all your target exams.")
 
+    
+elif page == "Upload Documents":
+    st.header("📄 Free PDF-to-MCQ Generator")
+    st.write(
+        "Generate basic practice questions from your PDF. "
+        "No AI API or API key required."
+    )
 
-elif page == "Upload Questions":
+    pdf = st.file_uploader(
+        "Upload your exam notes",
+        type=["pdf"]
+    )
+
+    count = st.slider(
+        "Number of questions",
+        min_value=5,
+        max_value=30,
+        value=10
+    )
+
+    if st.button("Generate MCQs", disabled=(pdf is None)):
+        try:
+            with st.spinner("Extracting text and making questions..."):
+                questions = generate_mcqs(pdf, count)
+
+            if questions:
+                st.session_state["rule_mcqs"] = questions
+                st.success(
+                    f"Created {len(questions)} questions."
+                )
+            else:
+                st.warning(
+                    "Not enough suitable text was found. "
+                    "Try a text-based PDF with clear sentences."
+                )
+
+        except Exception as error:
+            st.error(
+                "Could not read this PDF. It may be scanned, "
+                "password-protected, or damaged."
+            )
+            st.caption(str(error))
+
+    questions = st.session_state.get("rule_mcqs", [])
+
+    if questions:
+        st.subheader("Practice questions")
+
+        for i, q in enumerate(questions):
+            st.markdown(
+                f"**Q{i + 1}. {q['question']}**"
+            )
+
+            selected = st.radio(
+                "Choose one answer",
+                ["A", "B", "C", "D"],
+                format_func=lambda x, q=q: (
+                    f"{x}. {q[x]}"
+                ),
+                key=f"rule_answer_{i}",
+                index=None
+            )
+
+            if st.button("Check answer", key=f"rule_check_{i}"):
+                if selected is None:
+                    st.warning("Select an option first.")
+                elif selected == q["answer"]:
+                    st.success("Correct!")
+                else:
+                    st.error(
+                        f"Correct answer: {q['answer']}. "
+                        f"{q[q['answer']]}"
+                    )
+
+                st.info(q["explanation"])
+
+        csv_data = pd.DataFrame(questions).to_csv(
+            index=False
+        ).encode("utf-8")
+
+        st.download_button(
+            "Download questions as CSV",
+            data=csv_data,
+            file_name="pdf_mcqs.csv",
+            mime="text/csv"
+        )
+        
     st.header("Upload Your Question Bank")
 
     uploaded_file = st.file_uploader(
