@@ -17,6 +17,7 @@ if page == "Home":
     st.write("Upload your question bank to start practising.")
     st.write("You can add questions for all your target exams.")
 
+
 elif page == "Upload Questions":
     st.header("Upload Your Question Bank")
 
@@ -27,23 +28,69 @@ elif page == "Upload Questions":
 
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file)
+            uploaded_file.seek(0)
+            df = pd.read_csv(
+                uploaded_file,
+                sep=None,
+                engine="python",
+                encoding="utf-8-sig"
+            )
+
+            # Clean spaces, capital letters and common heading variations
+            def clean_heading(name):
+                return "".join(
+                    ch for ch in str(name).strip().lower()
+                    if ch.isalnum()
+                )
+
+            aliases = {
+                "exam": "exam",
+                "subject": "subject",
+                "question": "question",
+                "a": "A",
+                "optiona": "A",
+                "b": "B",
+                "optionb": "B",
+                "c": "C",
+                "optionc": "C",
+                "d": "D",
+                "optiond": "D",
+                "answer": "answer",
+                "correctanswer": "answer",
+                "explanation": "explanation"
+            }
+
+            df.columns = [
+                aliases.get(clean_heading(col), str(col).strip())
+                for col in df.columns
+            ]
+
             required = [
                 "exam", "subject", "question",
                 "A", "B", "C", "D",
                 "answer", "explanation"
             ]
 
-            if all(col in df.columns for col in required):
-                st.session_state["questions"] = df
-                st.success(f"Loaded {len(df)} questions!")
-                st.dataframe(df, use_container_width=True)
+            st.write("Headings detected in your file:")
+            st.write(list(df.columns))
+
+            missing = [col for col in required if col not in df.columns]
+
+            if missing:
+                st.error("Some required headings are still missing:")
+                st.write(missing)
+                st.info(
+                    "Check the detected headings above. "
+                    "If all headings appear in one column, "
+                    "the CSV separator may be incorrect."
+                )
             else:
-                st.error("CSV headings are incorrect.")
-                st.write("Required headings:")
-                st.code(", ".join(required))
+                st.session_state["questions"] = df
+                st.success(f"Loaded {len(df)} questions successfully!")
+                st.dataframe(df, use_container_width=True)
+
         except Exception as e:
-            st.error(f"Could not read the CSV: {e}")
+            st.error(f"Could not read the CSV file: {e}")
 
 elif page == "Mock Test":
     st.header("Mock Test")
