@@ -9,7 +9,7 @@ st.write("SSC CPO | SSC CGL | RRB NTPC | IB ACIO | CAPF AC")
 st.sidebar.title("Menu")
 page = st.sidebar.radio(
     "Choose a section",
-    ["Home", "Upload Questions", "Mock Test"]
+    ["Home", "Upload Questions", "Mock Test", "Flashcards"]
 )
 
 if page == "Home":
@@ -171,3 +171,171 @@ elif page == "Mock Test":
                 f"Answered: {len(st.session_state['test_answers'])}"
                 f" / {len(test_df)}"
             )
+
+
+elif page == "Flashcards":
+    import random
+
+    st.title("My Flashcards")
+    st.write("Upload questions and answers, then revise them.")
+
+    uploaded_file = st.file_uploader(
+        "Upload Flashcards CSV",
+        type=["csv"],
+        key="flashcards_upload"
+    )
+
+    if uploaded_file is not None:
+        try:
+            df_cards = pd.read_csv(
+                uploaded_file,
+                encoding="utf-8-sig"
+            )
+
+            df_cards.columns = (
+                df_cards.columns.str.strip().str.lower()
+            )
+
+            if not {"front", "back"}.issubset(df_cards.columns):
+                st.error(
+                    "CSV must contain these headings: front, back"
+                )
+            else:
+                df_cards = df_cards.dropna(
+                    subset=["front", "back"]
+                ).reset_index(drop=True)
+
+                st.session_state["flashcard_data"] = (
+                    df_cards[["front", "back"]].astype(str)
+                )
+
+                if (
+                    "flashcard_order" not in st.session_state
+                    or len(st.session_state["flashcard_order"])
+                    != len(df_cards)
+                ):
+                    st.session_state["flashcard_order"] = list(
+                        range(len(df_cards))
+                    )
+                    st.session_state["flashcard_index"] = 0
+
+        except Exception as e:
+            st.error(f"Could not read CSV: {e}")
+
+    if "flashcard_data" in st.session_state:
+        cards = st.session_state["flashcard_data"]
+
+        if len(cards) == 0:
+            st.warning("Your CSV contains no flashcards.")
+        else:
+            if "flashcard_order" not in st.session_state:
+                st.session_state["flashcard_order"] = list(
+                    range(len(cards))
+                )
+                st.session_state["flashcard_index"] = 0
+
+            if "flashcard_known" not in st.session_state:
+                st.session_state["flashcard_known"] = set()
+
+            if "flashcard_review" not in st.session_state:
+                st.session_state["flashcard_review"] = set()
+
+            if "flashcard_revealed" not in st.session_state:
+                st.session_state["flashcard_revealed"] = False
+
+            order = st.session_state["flashcard_order"]
+            index = st.session_state["flashcard_index"]
+            index = index % len(order)
+            st.session_state["flashcard_index"] = index
+
+            card_id = order[index]
+            front = cards.iloc[card_id]["front"]
+            back = cards.iloc[card_id]["back"]
+
+            st.write(
+                f"Card {index + 1} of {len(order)}"
+            )
+
+            st.progress((index + 1) / len(order))
+
+            st.subheader("Question — Front")
+            st.info(front)
+
+            if st.button(
+                "Show Answer",
+                key="show_flashcard_answer"
+            ):
+                st.session_state["flashcard_revealed"] = True
+
+            if st.session_state["flashcard_revealed"]:
+                st.subheader("Answer — Back")
+                st.success(back)
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button("✓ I Know It", key="card_known"):
+                        st.session_state["flashcard_known"].add(
+                            card_id
+                        )
+                        st.session_state["flashcard_review"].discard(
+                            card_id
+                        )
+                        st.session_state["flashcard_index"] = (
+                            (index + 1) % len(order)
+                        )
+                        st.session_state["flashcard_revealed"] = False
+                        st.rerun()
+
+                with col2:
+                    if st.button("× Need Review", key="card_review"):
+                        st.session_state["flashcard_review"].add(
+                            card_id
+                        )
+                        st.session_state["flashcard_known"].discard(
+                            card_id
+                        )
+                        st.session_state["flashcard_index"] = (
+                            (index + 1) % len(order)
+                        )
+                        st.session_state["flashcard_revealed"] = False
+                        st.rerun()
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                if st.button("Previous"):
+                    st.session_state["flashcard_index"] = (
+                        index - 1
+                    ) % len(order)
+                    st.session_state["flashcard_revealed"] = False
+                    st.rerun()
+
+            with col2:
+                if st.button("Next"):
+                    st.session_state["flashcard_index"] = (
+                        index + 1
+                    ) % len(order)
+                    st.session_state["flashcard_revealed"] = False
+                    st.rerun()
+
+            with col3:
+                if st.button("Shuffle Cards"):
+                    new_order = order.copy()
+                    random.shuffle(new_order)
+                    st.session_state["flashcard_order"] = new_order
+                    st.session_state["flashcard_index"] = 0
+                    st.session_state["flashcard_revealed"] = False
+                    st.rerun()
+
+            st.divider()
+            st.subheader("Revision Progress")
+            st.metric(
+                "Cards known",
+                len(st.session_state["flashcard_known"])
+            )
+            st.metric(
+                "Cards to review",
+                len(st.session_state["flashcard_review"])
+            )
+            
