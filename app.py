@@ -4,10 +4,6 @@ import pandas as pd
 import streamlit as st
 from pypdf import PdfReader
 
-streamlit
-pandas
-pypdf
-
 st.set_page_config(
     page_title="My Exam Preparation",
     page_icon="📚",
