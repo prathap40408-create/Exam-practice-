@@ -347,26 +347,101 @@ elif page == "Mock Test":
                 st.session_state.mock_answers = {}
                 st.rerun()
 
+
 # ---------- FLASHCARDS ----------
 elif page == "Flashcards":
-    st.header("🗂️ Flashcards")
+    st.header("🗂️ Flashcards from PDF")
 
-    with st.form("flashcard_form", clear_on_submit=True):
-        front = st.text_input("Question or term")
-        back = st.text_input("Answer or definition")
-        add = st.form_submit_button("Add Flashcard")
+    pdf = st.file_uploader(
+        "Upload your study notes (PDF)",
+        type=["pdf"],
+        key="flashcard_pdf"
+    )
 
-    if add:
-        if front.strip() and back.strip():
-            st.session_state.flashcards.append({
-                "front": front.strip(),
-                "back": back.strip()
-            })
-            st.success("Flashcard added.")
-        else:
-            st.warning("Enter both a question and an answer.")
+    if pdf is not None:
+        if st.button("Create Flashcards"):
+            try:
+                reader = PdfReader(pdf)
 
-    for i, card in enumerate(st.session_state.flashcards):
-        with st.expander(f"Card {i + 1}: {card['front']}"):
-            st.write(card["back"])
-            
+                text = "\n".join(
+                    page.extract_text() or ""
+                    for page in reader.pages
+                )
+
+                sentences = re.split(
+                    r"(?<=[.!?])\s+|\n+",
+                    text
+                )
+
+                cards = []
+
+                for sentence in sentences:
+                    sentence = " ".join(sentence.split())
+
+                    if len(sentence) < 30:
+                        continue
+
+                    match = re.search(
+                        r"\b\d{4}\b|\b[A-Z][a-z]{3,}\b",
+                        sentence
+                    )
+
+                    if match:
+                        term = match.group()
+                        question = sentence.replace(
+                            term, "________", 1
+                        )
+
+                        cards.append({
+                            "front": question,
+                            "back": term + " — " + sentence
+                        })
+
+                unique_cards = []
+                seen = set()
+
+                for card in cards:
+                    key = card["front"].lower()
+
+                    if key not in seen:
+                        seen.add(key)
+                        unique_cards.append(card)
+
+                st.session_state.flashcards = unique_cards
+
+                if unique_cards:
+                    st.success(
+                        f"Created {len(unique_cards)} flashcards."
+                    )
+                else:
+                    st.warning(
+                        "No suitable text found. Try a text-based PDF."
+                    )
+
+            except Exception as error:
+                st.error("Could not read this PDF.")
+                st.caption(str(error))
+
+    cards = st.session_state.flashcards
+
+    if cards:
+        st.subheader("Your Flashcards")
+
+        for i, card in enumerate(cards):
+            with st.expander(f"Flashcard {i + 1}"):
+                st.write("**Question:**")
+                st.write(card["front"])
+                st.write("**Answer:**")
+                st.write(card["back"])
+
+        csv_data = pd.DataFrame(cards).to_csv(
+            index=False
+        ).encode("utf-8")
+
+        st.download_button(
+            "Download Flashcards",
+            data=csv_data,
+            file_name="flashcards.csv",
+            mime="text/csv"
+        )
+        
