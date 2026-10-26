@@ -1,511 +1,378 @@
 
-import os
-import json
+import re
 import random
 import streamlit as st
 import pandas as pd
 from pypdf import PdfReader
-from openai import OpenAI
 
 st.set_page_config(
-    page_title="Competitive Exam Study Tool",
+    page_title="Competitive Exam Study",
     page_icon="📚",
     layout="wide"
 )
 
 st.title("📚 Competitive Exam Study Tool")
 
-# API key: Streamlit Secrets first, environment variable second
-try:
-    API_KEY = st.secrets.get("OPENAI_API_KEY", "")
-except Exception:
-    API_KEY = ""
-
-API_KEY = API_KEY or os.getenv("OPENAI_API_KEY", "")
-
-if API_KEY:
-    client = OpenAI(api_key=API_KEY)
-else:
-    client = None
-
 if "mcqs" not in st.session_state:
     st.session_state.mcqs = []
-
 if "flashcards" not in st.session_state:
     st.session_state.flashcards = []
+if "test_result" not in st.session_state:
+    st.session_state.test_result = False
 
-if "test_answers" not in st.session_state:
-    st.session_state.test_answers = {}
+# ---------- PDF EXTRACTION ----------
 
-if "test_submitted" not in st.session_state:
-    st.session_state.test_submitted = False
-
-# ---------------- PDF FUNCTIONS ----------------
-
-def extract_pdf(uploaded_file):
-    reader = PdfReader(uploaded_file)
+def extract_pdf(file):
+    reader = PdfReader(file)
     pages = []
 
-    for page_number, page in enumerate(reader.pages, start=1):
+    for page_no, page in enumerate(reader.pages, 1):
         text = page.extract_text() or ""
         if text.strip():
-            pages.append(
-                f"[PDF page {page_number}]\n{text}"
-            )
+            pages.append((page_no, text))
 
-    return "\n\n".join(pages)
+    return pages
 
 
-def split_text(text, max_chars=7000):
-    """Split PDF text without cutting it at arbitrary word boundaries."""
-    paragraphs = text.splitlines()
-    chunks = []
-    current = ""
+def split_sentences(pages):
+    sentences = []
 
-    for paragraph in paragraphs:
-        paragraph = paragraph.strip()
-        if not paragraph:
-            continue
+    for page_no, text in pages:
+        text = re.sub(r"[ \t]+", " ", text)
+        parts = re.split(r"(?<=[.!?])\s+|\n+", text)
 
-        if len(current) + len(paragraph) + 1 > max_chars:
-            if current:
-                chunks.append(current)
-            current = paragraph
-        else:
-            current += "\n" + paragraph
+        for part in parts:
+            part = part.strip(" \t\r\n•-")
+            if len(part.split()) >= 5:
+                sentences.append({
+                    "text": part,
+                    "page": page_no
+                })
 
-    if current:
-        chunks.append(current)
-
-    return chunks
+    return sentences
 
 
-def ask_ai(prompt):
-    if not client:
-        raise ValueError(
-            "Add your OPENAI_API_KEY in Streamlit Secrets first."
-        )
+# ---------- SOURCE-BASED QUESTION GENERATION ----------
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert competitive-exam question setter. "
-                    "Create accurate SSC CPO, SSC CGL and RRB NTPC-level "
-                    "study material. Use only facts supported by the "
-                    "provided PDF text. Never invent facts, answers, dates, "
-                    "articles or explanations. Avoid childish questions, "
-                    "trivial sentence blanks and duplicate questions. "
-                    "Return valid JSON only."
-                )
-            },
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.3
-    )
-
-    return json.loads(response.choices[0].message.content)
-
-
-def generate_mcqs(pdf_text, wanted=120):
-    chunks = split_text(pdf_text)
-    if not chunks:
-        return []
-
-    results = []
+def make_mcqs(sentences):
+    questions = []
     seen = set()
 
-    # Generate in small batches to handle large PDFs.
-    # Multiple rounds help when a PDF has only a few text chunks.
-    for round_number in range(4):
-        for chunk_number, chunk in enumerate(chunks):
-            remaining = wanted - len(results)
-            if remaining <= 0:
-                break
+    for item in sentences:
+        sentence = item["text"]
+        question = None
+        answer = None
 
-            batch_size = min(10, remaining)
-            existing = [q["question"] for q in results]
+        # Example: "The Solar System has 8 planets."
+        match = re.search(
+            r"^(.{2,100}?)\s+has\s+"
+            r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+            r"\s+(.{2,100})[.!?]?$",
+            sentence,
+            re.IGNORECASE
+        )
 
-            prompt = f"""
-Create exactly {batch_size} distinct competitive-exam MCQs
-from the SOURCE TEXT below.
+        if match:
+            subject = match.group(1).strip()
+            number = match.group(2).strip()
+            noun = match.group(3).strip().rstrip(".!?")
 
-Return this JSON structure:
-{{
-  "questions": [
-    {{
-      "question": "Clear exam-level question",
-      "options": {{
-        "A": "Option A",
-        "B": "Option B",
-        "C": "Option C",
-        "D": "Option D"
-      }},
-      "answer": "C",
-      "explanation": "Short, accurate explanation supported by the source"
-    }}
-  ]
-}}
+            number_words = {
+                "one": "1", "two": "2", "three": "3",
+                "four": "4", "five": "5", "six": "6",
+                "seven": "7", "eight": "8", "nine": "9",
+                "ten": "10"
+            }
+            answer = number_words.get(number.lower(), number)
 
-Rules:
-- Four options, exactly one correct answer.
-- Include important facts, concepts, dates, people, places,
-  definitions, comparisons and cause-and-effect relationships
-  where the source supports them.
-- Wrong options must be plausible but clearly incorrect.
-- Do not turn random sentences into fill-in-the-blank questions.
-- Do not repeat these existing questions:
-{json.dumps(existing[-100:], ensure_ascii=False)}
-- If the source cannot support more distinct, accurate questions,
-  return only the questions it can support.
-- Do not use outside facts.
-- The explanation must be supported by the source.
+            question = (
+                f"According to the source, how many "
+                f"{noun} does {subject} have?"
+            )
 
-SOURCE TEXT:
-{chunk}
-"""
+        # Example: "The Constitution was adopted in 1949."
+        if not question:
+            match = re.search(
+                r"^(.{3,120}?)\s+"
+                r"(?:was adopted|was established|was founded|"
+                r"was formed|occurred|took place)\s+in\s+"
+                r"(\d{3,4})[.!?]?$",
+                sentence,
+                re.IGNORECASE
+            )
 
-            try:
-                data = ask_ai(prompt)
-                for item in data.get("questions", []):
-                    question = item.get("question", "").strip()
-                    options = item.get("options", {})
-                    answer = str(item.get("answer", "")).strip().upper()
-                    explanation = item.get("explanation", "").strip()
-
-                    if (
-                        not question
-                        or not isinstance(options, dict)
-                        or set(options.keys()) != {"A", "B", "C", "D"}
-                        or answer not in {"A", "B", "C", "D"}
-                        or not explanation
-                    ):
-                        continue
-
-                    key = question.casefold()
-                    if key in seen:
-                        continue
-
-                    seen.add(key)
-                    results.append({
-                        "question": question,
-                        "options": options,
-                        "answer": answer,
-                        "explanation": explanation
-                    })
-
-                    if len(results) >= wanted:
-                        break
-
-            except Exception as error:
-                st.warning(
-                    f"Could not process PDF section "
-                    f"{chunk_number + 1}: {error}"
+            if match:
+                subject = match.group(1).strip()
+                answer = match.group(2)
+                question = (
+                    f"In which year, according to the source, "
+                    f"was {subject} {sentence.split(' in ')[0].split()[-1].lower()}?"
                 )
 
-        if len(results) >= wanted:
-            break
+        if not question or not answer:
+            continue
 
-    return results[:wanted]
+        key = question.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Create distractors for numerical answers.
+        if answer.isdigit():
+            correct = int(answer)
+            distractors = [
+                str(n) for n in
+                [correct - 2, correct - 1, correct + 1, correct + 2]
+                if n >= 0 and n != correct
+            ]
+            distractors = list(dict.fromkeys(distractors))[:3]
+
+            if len(distractors) < 3:
+                continue
+
+            options = distractors + [answer]
+            random.shuffle(options)
+            labels = ["A", "B", "C", "D"]
+            option_map = dict(zip(labels, options))
+            correct_label = next(
+                label for label, value in option_map.items()
+                if value == answer
+            )
+
+            questions.append({
+                "question": question,
+                "options": option_map,
+                "answer": correct_label,
+                "explanation": sentence,
+                "page": item["page"]
+            })
+
+    return questions
 
 
-def generate_flashcards(pdf_text, wanted=40):
-    chunks = split_text(pdf_text)
+def make_flashcards(sentences, limit):
     cards = []
     seen = set()
 
-    for chunk_number, chunk in enumerate(chunks):
-        if len(cards) >= wanted:
+    for item in sentences:
+        sentence = item["text"]
+
+        # Prefer factual statements containing dates or numbers.
+        if not re.search(r"\d| is | was | has | are | were ", sentence,
+                         re.IGNORECASE):
+            continue
+
+        key = sentence.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        cards.append({
+            "front": "What fact does the source state?",
+            "back": sentence,
+            "page": item["page"]
+        })
+
+        if len(cards) >= limit:
             break
 
-        batch_size = min(10, wanted - len(cards))
-
-        prompt = f"""
-Create up to {batch_size} useful competitive-exam flashcards
-from the SOURCE TEXT.
-
-Return JSON:
-{{
-  "flashcards": [
-    {{
-      "front": "One clear question",
-      "back": "Exact answer plus a short supporting explanation"
-    }}
-  ]
-}}
-
-Rules:
-- Front must contain a question or clear recall prompt.
-- Back must give the answer, not another question.
-- Cover important facts and concepts suitable for SSC CPO,
-  SSC CGL and RRB NTPC.
-- No childish questions, random blanks or duplicate cards.
-- Do not invent facts or use outside knowledge.
-- If the source cannot support more useful cards, return fewer.
-
-SOURCE TEXT:
-{chunk}
-"""
-        try:
-            data = ask_ai(prompt)
-            for item in data.get("flashcards", []):
-                front = item.get("front", "").strip()
-                back = item.get("back", "").strip()
-
-                if not front or not back:
-                    continue
-
-                key = front.casefold()
-                if key in seen:
-                    continue
-
-                seen.add(key)
-                cards.append({"front": front, "back": back})
-
-                if len(cards) >= wanted:
-                    break
-
-        except Exception as error:
-            st.warning(
-                f"Could not process flashcard section "
-                f"{chunk_number + 1}: {error}"
-            )
-
-    return cards[:wanted]
+    return cards
 
 
-# ---------------- MENU ----------------
+# ---------- NAVIGATION ----------
 
 page = st.sidebar.radio(
-    "Choose a page",
+    "Menu",
     ["Home", "PDF to MCQ", "Mock Test", "Flashcards"]
 )
 
 if page == "Home":
-    st.header("Welcome")
-    st.write(
-        "Upload your study PDF to create exam-level MCQs "
-        "and question-answer flashcards."
-    )
-    st.write("**Target exams:** SSC CPO, SSC CGL, RRB NTPC and more.")
-    st.info(
-        "Generated questions are based on the extracted PDF text. "
-        "Scanned PDFs may need OCR before their text can be read."
-    )
-
-# ---------------- PDF TO MCQ ----------------
+    st.header("Competitive Exam Preparation")
+    st.write("Create study material from your own PDF.")
+    st.write("Target exams: SSC CPO, SSC CGL, RRB NTPC and more.")
+    st.info("This version needs no API key.")
 
 elif page == "PDF to MCQ":
-    st.header("PDF to Competitive-Exam MCQs")
+    st.header("PDF to MCQ")
 
-    pdf_file = st.file_uploader(
-        "Upload your study PDF",
+    file = st.file_uploader(
+        "Upload your PDF",
         type=["pdf"],
         key="mcq_pdf"
     )
 
-    if pdf_file:
-        st.caption(f"Uploaded: {pdf_file.name}")
+    if file and st.button("Generate up to 120 MCQs"):
+        try:
+            with st.spinner("Extracting PDF facts..."):
+                pages = extract_pdf(file)
+                sentences = split_sentences(pages)
+                st.session_state.mcqs = make_mcqs(sentences)
 
-        if st.button("Generate 120 MCQs", type="primary"):
-            try:
-                with st.spinner(
-                    "Reading the PDF and generating questions..."
-                ):
-                    pdf_text = extract_pdf(pdf_file)
+            st.session_state.test_result = False
 
-                    if len(pdf_text.strip()) < 100:
-                        st.error(
-                            "Very little text was extracted. "
-                            "This may be a scanned PDF; OCR may be needed."
-                        )
-                    else:
-                        st.session_state.mcqs = generate_mcqs(
-                            pdf_text, 120
-                        )
-                        st.session_state.test_answers = {}
-                        st.session_state.test_submitted = False
+            if not sentences:
+                st.error(
+                    "No readable text found. This PDF may be scanned "
+                    "and need OCR."
+                )
+            elif not st.session_state.mcqs:
+                st.warning(
+                    "No supported numerical questions were identified "
+                    "by this basic generator. The PDF may still contain "
+                    "many important facts."
+                )
+        except Exception as e:
+            st.error(f"PDF error: {e}")
 
-            except Exception as error:
-                st.error(f"Could not read PDF: {error}")
+    questions = st.session_state.mcqs
 
-    if st.session_state.mcqs:
-        st.success(
-            f"{len(st.session_state.mcqs)} MCQs generated."
-        )
+    if questions:
+        st.success(f"{len(questions)} questions generated.")
 
-        if len(st.session_state.mcqs) < 120:
-            st.warning(
-                "Fewer than 120 questions were generated. "
-                "Check the extracted PDF text and API results. "
-                "Do not assume the PDF lacks information."
+        if len(questions) < 120:
+            st.info(
+                "This basic free generator only supports certain "
+                "fact patterns. It does not mean your PDF lacks content."
             )
 
-        for i, q in enumerate(st.session_state.mcqs, start=1):
-            with st.expander(f"Question {i}: {q['question']}"):
-                st.write(f"A) {q['options']['A']}")
-                st.write(f"B) {q['options']['B']}")
-                st.write(f"C) {q['options']['C']}")
-                st.write(f"D) {q['options']['D']}")
-                st.write(f"**Correct answer:** {q['answer']}) "
-                         f"{q['options'][q['answer']]}")
-                st.write(f"**Explanation:** {q['explanation']}")
+        for i, q in enumerate(questions, 1):
+            with st.expander(f"Q{i}. {q['question']}"):
+                for label, option in q["options"].items():
+                    st.write(f"{label}) {option}")
 
-        mcq_export = []
-        for i, q in enumerate(st.session_state.mcqs, start=1):
-            mcq_export.append({
-                "No.": i,
+                st.write(
+                    f"**Correct answer:** {q['answer']}) "
+                    f"{q['options'][q['answer']]}"
+                )
+                st.write(f"**Explanation:** {q['explanation']}")
+                st.caption(f"Source PDF page: {q['page']}")
+
+        rows = []
+        for q in questions:
+            rows.append({
                 "Question": q["question"],
                 "Option A": q["options"]["A"],
                 "Option B": q["options"]["B"],
                 "Option C": q["options"]["C"],
                 "Option D": q["options"]["D"],
-                "Correct Answer": q["answer"],
-                "Explanation": q["explanation"]
+                "Answer": q["answer"],
+                "Explanation": q["explanation"],
+                "PDF page": q["page"]
             })
 
-        csv_data = pd.DataFrame(mcq_export).to_csv(index=False)
         st.download_button(
-            "Download MCQs as CSV",
-            data=csv_data,
-            file_name="competitive_exam_mcqs.csv",
-            mime="text/csv"
+            "Download MCQs CSV",
+            pd.DataFrame(rows).to_csv(index=False),
+            "mcqs.csv",
+            "text/csv"
         )
-
-# ---------------- MOCK TEST ----------------
 
 elif page == "Mock Test":
     st.header("Mock Test")
-    st.write("Scoring: +1 correct, −0.33 incorrect, 0 unanswered.")
+    st.write("Correct: +1 | Incorrect: -0.33 | Unanswered: 0")
 
     questions = st.session_state.mcqs
 
     if not questions:
-        st.info(
-            "First generate MCQs from your PDF in the PDF to MCQ page."
-        )
+        st.info("Generate questions in the PDF to MCQ page first.")
     else:
-        if st.button("Start / Reset Mock Test"):
-            st.session_state.test_answers = {}
-            st.session_state.test_submitted = False
+        with st.form("mock_test"):
+            answers = {}
 
-        for i, q in enumerate(questions):
-            choice = st.radio(
-                f"Q{i + 1}. {q['question']}",
-                options=["Not answered", "A", "B", "C", "D"],
-                format_func=lambda x, q=q: (
-                    x if x == "Not answered"
-                    else f"{x}) {q['options'][x]}"
-                ),
-                key=f"test_{i}",
-                index=0
-            )
-            if choice == "Not answered":
-                st.session_state.test_answers.pop(i, None)
-            else:
-                st.session_state.test_answers[i] = choice
+            for i, q in enumerate(questions):
+                selected = st.radio(
+                    f"Q{i + 1}. {q['question']}",
+                    ["Not answered", "A", "B", "C", "D"],
+                    format_func=lambda x, q=q: (
+                        x if x == "Not answered"
+                        else f"{x}) {q['options'][x]}"
+                    ),
+                    key=f"answer_{i}"
+                )
+                answers[i] = selected
 
-        if st.button("Submit Mock Test", type="primary"):
-            st.session_state.test_submitted = True
+            submitted = st.form_submit_button("Submit test")
 
-        if st.session_state.test_submitted:
+        if submitted:
             correct = 0
             wrong = 0
             unanswered = 0
 
             for i, q in enumerate(questions):
-                answer = st.session_state.test_answers.get(i)
+                selected = answers[i]
 
-                if answer is None:
+                if selected == "Not answered":
                     unanswered += 1
-                elif answer == q["answer"]:
+                elif selected == q["answer"]:
                     correct += 1
                 else:
                     wrong += 1
 
-            score = correct - (wrong * 0.33)
+            score = correct - 0.33 * wrong
             attempted = correct + wrong
-            accuracy = (
-                correct / attempted * 100 if attempted else 0
-            )
+            accuracy = correct / attempted * 100 if attempted else 0
 
-            st.subheader("Your Result")
-            st.metric("Score", f"{score:.2f} / {len(questions)}")
+            st.subheader("Results")
+            st.write(f"Score: {score:.2f} / {len(questions)}")
             st.write(f"Correct: {correct}")
             st.write(f"Incorrect: {wrong}")
             st.write(f"Unanswered: {unanswered}")
-            st.write(f"Accuracy of attempted questions: {accuracy:.2f}%")
+            st.write(f"Accuracy: {accuracy:.2f}%")
 
             st.subheader("Answer Analysis")
             for i, q in enumerate(questions):
-                chosen = st.session_state.test_answers.get(i)
                 st.write(f"**Q{i + 1}. {q['question']}**")
-                st.write(
-                    f"Your answer: {chosen or 'Not answered'}"
-                )
-                st.write(
-                    f"Correct answer: {q['answer']}) "
-                    f"{q['options'][q['answer']]}"
-                )
+                st.write(f"Your answer: {answers[i]}")
+                st.write(f"Correct answer: {q['answer']}")
                 st.write(f"Explanation: {q['explanation']}")
 
-# ---------------- FLASHCARDS ----------------
-
 elif page == "Flashcards":
-    st.header("PDF-Based Flashcards")
+    st.header("PDF Flashcards")
 
-    pdf_file = st.file_uploader(
-        "Upload your study PDF",
+    file = st.file_uploader(
+        "Upload your PDF",
         type=["pdf"],
         key="flashcard_pdf"
     )
 
-    card_count = st.selectbox(
-        "Number of flashcards",
+    limit = st.selectbox(
+        "Number of cards",
         [10, 20, 30, 40],
         index=3
     )
 
-    if pdf_file and st.button("Generate Flashcards", type="primary"):
+    if file and st.button("Generate Flashcards"):
         try:
-            with st.spinner("Creating question-answer flashcards..."):
-                pdf_text = extract_pdf(pdf_file)
+            pages = extract_pdf(file)
+            sentences = split_sentences(pages)
+            st.session_state.flashcards = make_flashcards(
+                sentences, limit
+            )
 
-                if len(pdf_text.strip()) < 100:
-                    st.error(
-                        "Very little text was extracted. "
-                        "This PDF may need OCR."
-                    )
-                else:
-                    st.session_state.flashcards = generate_flashcards(
-                        pdf_text, card_count
-                    )
-        except Exception as error:
-            st.error(f"Could not read PDF: {error}")
+            if not st.session_state.flashcards:
+                st.warning(
+                    "No suitable facts were identified by the "
+                    "basic generator."
+                )
+        except Exception as e:
+            st.error(f"PDF error: {e}")
 
-    if st.session_state.flashcards:
-        st.success(
-            f"{len(st.session_state.flashcards)} flashcards generated."
-        )
+    cards = st.session_state.flashcards
 
-        for i, card in enumerate(
-            st.session_state.flashcards, start=1
-        ):
-            with st.expander(f"Card {i}: {card['front']}"):
-                st.markdown("**FRONT — QUESTION**")
-                st.write(card["front"])
-                st.divider()
-                st.markdown("**BACK — ANSWER**")
-                st.write(card["back"])
+    for i, card in enumerate(cards, 1):
+        with st.expander(f"Flashcard {i} — Tap to reveal"):
+            st.markdown("**FRONT — QUESTION**")
+            st.write(card["front"])
+            st.divider()
+            st.markdown("**BACK — ANSWER**")
+            st.write(card["back"])
+            st.caption(f"Source PDF page: {card['page']}")
 
-        card_data = pd.DataFrame(st.session_state.flashcards)
+    if cards:
         st.download_button(
-            "Download Flashcards as CSV",
-            data=card_data.to_csv(index=False),
-            file_name="competitive_exam_flashcards.csv",
-            mime="text/csv"
+            "Download Flashcards CSV",
+            pd.DataFrame(cards).to_csv(index=False),
+            "flashcards.csv",
+            "text/csv"
             )
     
