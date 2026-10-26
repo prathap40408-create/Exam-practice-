@@ -1,338 +1,275 @@
-
 import re
 import random
 import pandas as pd
+
 import streamlit as st
-from pypdf import PdfReader
+import random
 
 st.set_page_config(
-    page_title="My Exam Preparation",
+    page_title="SSC Exam Practice",
     page_icon="📚",
     layout="centered"
 )
 
-st.title("📚 My Exam Preparation")
+st.title("📚 SSC Exam Practice")
 
-# ---------- PDF TO MCQ FUNCTION ----------
+# Sample questions. Add more unique questions here.
+QUESTION_BANK = [
+    {
+        "id": 1,
+        "topic": "Polity",
+        "question": "When was the Constitution of India adopted?",
+        "options": ["15 August 1947", "26 November 1949",
+                    "26 January 1950", "2 October 1950"],
+        "answer": "B",
+        "explanation": "The Constituent Assembly adopted the Constitution on 26 November 1949."
+    },
+    {
+        "id": 2,
+        "topic": "Polity",
+        "question": "When did the Constitution of India come into force?",
+        "options": ["15 August 1947", "26 November 1949",
+                    "26 January 1950", "26 January 1949"],
+        "answer": "C",
+        "explanation": "The Constitution came into force on 26 January 1950."
+    },
+    {
+        "id": 3,
+        "topic": "Polity",
+        "question": "Who was the Chairman of the Drafting Committee?",
+        "options": ["Jawaharlal Nehru", "B. R. Ambedkar",
+                    "Rajendra Prasad", "Sardar Patel"],
+        "answer": "B",
+        "explanation": "Dr. B. R. Ambedkar chaired the Drafting Committee."
+    },
+    {
+        "id": 4,
+        "topic": "History",
+        "question": "The Great Bath was discovered at which site?",
+        "options": ["Harappa", "Lothal", "Mohenjo-daro", "Kalibangan"],
+        "answer": "C",
+        "explanation": "The Great Bath is a famous structure at Mohenjo-daro."
+    },
+    {
+        "id": 5,
+        "topic": "History",
+        "question": "Who founded the Mauryan Empire?",
+        "options": ["Ashoka", "Chandragupta Maurya",
+                    "Bindusara", "Harsha"],
+        "answer": "B",
+        "explanation": "Chandragupta Maurya founded the Mauryan Empire."
+    },
+    {
+        "id": 6,
+        "topic": "Geography",
+        "question": "Which is the largest state in India by area?",
+        "options": ["Madhya Pradesh", "Maharashtra",
+                    "Rajasthan", "Uttar Pradesh"],
+        "answer": "C",
+        "explanation": "Rajasthan is India's largest state by area."
+    },
+    {
+        "id": 7,
+        "topic": "Science",
+        "question": "What is the SI unit of force?",
+        "options": ["Joule", "Watt", "Newton", "Pascal"],
+        "answer": "C",
+        "explanation": "The SI unit of force is the newton."
+    },
+    {
+        "id": 8,
+        "topic": "Economics",
+        "question": "Which institution issues most currency notes in India?",
+        "options": ["SBI", "RBI", "SEBI", "NABARD"],
+        "answer": "B",
+        "explanation": "The Reserve Bank of India issues banknotes, except the one-rupee note."
+    },
+    {
+        "id": 9,
+        "topic": "Polity",
+        "question": "Fundamental Rights are mainly contained in which part?",
+        "options": ["Part I", "Part II", "Part III", "Part IV"],
+        "answer": "C",
+        "explanation": "Fundamental Rights are contained in Part III of the Constitution."
+    },
+    {
+        "id": 10,
+        "topic": "History",
+        "question": "Who was the first Mughal emperor of India?",
+        "options": ["Akbar", "Babur", "Humayun", "Shah Jahan"],
+        "answer": "B",
+        "explanation": "Babur founded the Mughal Empire in India in 1526."
+    },
+]
 
-def generate_mcqs(pdf_file, limit=10):
-    reader = PdfReader(pdf_file)
+# Track used question IDs during the current app session.
+if "used_ids" not in st.session_state:
+    st.session_state.used_ids = []
 
-    text = "\n".join(
-        page.extract_text() or ""
-        for page in reader.pages
-    )
+if "current_set" not in st.session_state:
+    st.session_state.current_set = []
 
-    sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
-
-    pattern = re.compile(
-        r"\b(?:"
-        r"\d{4}"
-        r"|\d+(?:\.\d+)?%?"
-        r"|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}"
-        r")\b"
-    )
-
-    facts = []
-    for sentence in sentences:
-        sentence = " ".join(sentence.split())
-
-        if not 30 <= len(sentence) <= 350:
-            continue
-
-        for match in pattern.finditer(sentence):
-            answer = match.group().strip()
-
-            if answer.lower() in {
-                "the", "this", "that", "these", "those",
-                "when", "where", "which", "there", "however"
-            }:
-                continue
-
-            question = (
-                sentence[:match.start()]
-                + "________"
-                + sentence[match.end():]
-            )
-
-            facts.append({
-                "question": question,
-                "answer": answer,
-                "sentence": sentence
-            })
-
-    unique = []
-    seen = set()
-
-    for fact in facts:
-        key = (fact["question"].lower(), fact["answer"].lower())
-        if key not in seen:
-            seen.add(key)
-            unique.append(fact)
-
-    answer_pool = list({
-        fact["answer"] for fact in unique
-    })
-
-    if len(answer_pool) < 4:
-        return []
-
-    random.shuffle(unique)
-    mcqs = []
-
-    for fact in unique:
-        wrong = [
-            answer for answer in answer_pool
-            if answer.lower() != fact["answer"].lower()
-        ]
-
-        if len(wrong) < 3:
-            continue
-
-        options = random.sample(wrong, 3)
-        options.append(fact["answer"])
-        random.shuffle(options)
-
-        labels = ["A", "B", "C", "D"]
-        correct = labels[options.index(fact["answer"])]
-
-        mcqs.append({
-            "question": fact["question"],
-            "A": options[0],
-            "B": options[1],
-            "C": options[2],
-            "D": options[3],
-            "answer": correct,
-            "explanation": fact["sentence"]
-        })
-
-        if len(mcqs) >= limit:
-            break
-
-    return mcqs
-
-
-# ---------- MENU ----------
-
-st.sidebar.title("Menu")
-
-page = st.sidebar.radio(
-    "Choose a feature",
-    [
-        "Home",
-        "Upload Documents",
-        "PDF to MCQ",
-        "Mock Test",
-        "Flashcards"
-    ]
-)
-
-if "questions" not in st.session_state:
-    st.session_state.questions = []
+if "submitted" not in st.session_state:
+    st.session_state.submitted = False
 
 if "flashcards" not in st.session_state:
     st.session_state.flashcards = []
 
-if "mock_score" not in st.session_state:
-    st.session_state.mock_score = None
-
-
-# ---------- HOME ----------
+page = st.sidebar.radio(
+    "Menu",
+    ["Home", "Mock Test", "Flashcards"]
+)
 
 if page == "Home":
     st.header("Welcome!")
-
-    st.write("Your free exam preparation website.")
-
-    st.markdown("""
-    - 📄 Upload Documents
-    - 📝 PDF to MCQ Generator
-    - 🎯 Mock Test
-    - 🗂️ Flashcards
-
-    Use the menu on the left to begin.
-    """)
-
-
-# ---------- UPLOAD DOCUMENTS ----------
-
-elif page == "Upload Documents":
-    st.header("📄 Upload Documents")
-
-    pdf = st.file_uploader(
-        "Upload your PDF notes",
-        type=["pdf"],
-        key="document_pdf"
+    st.write("Practice SSC CPO, CGL, RRB NTPC and other exams.")
+    st.write(f"Unique questions in bank: {len(QUESTION_BANK)}")
+    st.write(f"Questions already used: {len(st.session_state.used_ids)}")
+    st.warning(
+        "The sample bank is not yet large enough for a 120-question test. "
+        "Add at least 120 unique questions to enable a full test."
     )
-
-    if pdf:
-        st.success(f"Uploaded: {pdf.name}")
-        st.info(
-            "Use the PDF to MCQ page to create practice questions."
-        )
-
-
-# ---------- PDF TO MCQ ----------
-
-elif page == "PDF to MCQ":
-    st.header("📝 Free PDF to MCQ Generator")
-
-    st.write(
-        "Creates basic fill-in-the-blank multiple-choice "
-        "questions using text extracted from your PDF."
-    )
-
-    pdf = st.file_uploader(
-        "Choose a text-based PDF",
-        type=["pdf"],
-        key="mcq_pdf"
-    )
-
-    count = st.slider(
-        "Number of questions",
-        min_value=5,
-        max_value=30,
-        value=10
-    )
-
-    if st.button(
-        "Generate MCQs",
-        disabled=(pdf is None)
-    ):
-        try:
-            with st.spinner("Reading your PDF..."):
-                questions = generate_mcqs(pdf, count)
-
-            st.session_state.questions = questions
-            st.session_state.mock_score = None
-
-            if questions:
-                st.success(
-                    f"Generated {len(questions)} questions."
-                )
-            else:
-                st.warning(
-                    "Not enough suitable text was found. "
-                    "Try a text-based PDF with clear sentences."
-                )
-
-        except Exception as error:
-            st.error("Could not read this PDF.")
-            st.caption(str(error))
-
-    questions = st.session_state.questions
-
-    if questions:
-        st.subheader("Practice Questions")
-
-        for i, q in enumerate(questions):
-            st.markdown(
-                f"**Q{i + 1}. {q['question']}**"
-            )
-
-            st.radio(
-                "Select your answer",
-                ["A", "B", "C", "D"],
-                format_func=lambda x, q=q: f"{x}. {q[x]}",
-                key=f"pdf_answer_{i}",
-                index=None
-            )
-
-            with st.expander("Show answer and explanation"):
-                st.write(
-                    f"Correct answer: {q['answer']}. "
-                    f"{q[q['answer']]}"
-                )
-                st.write(q["explanation"])
-
-        csv_data = pd.DataFrame(questions).to_csv(
-            index=False
-        ).encode("utf-8")
-
-        st.download_button(
-            "Download Questions as CSV",
-            data=csv_data,
-            file_name="pdf_mcqs.csv",
-            mime="text/csv"
-        )
-
-
-# ---------- MOCK TEST ----------
 
 elif page == "Mock Test":
     st.header("🎯 Mock Test")
+    st.write("Correct: +1 | Incorrect: −0.33 | Unanswered: 0")
 
-    questions = st.session_state.questions
+    available = [
+        q for q in QUESTION_BANK
+        if q["id"] not in st.session_state.used_ids
+    ]
 
-    if not questions:
-        st.info(
-            "First generate questions on the PDF to MCQ page."
-        )
+    test_size = 120
+
+    if not st.session_state.current_set:
+        if len(available) >= test_size:
+            st.info(f"{len(available)} unused questions are available.")
+            if st.button("Start New 120-Question Test"):
+                st.session_state.current_set = random.sample(
+                    available, test_size
+                )
+                st.session_state.submitted = False
+                st.rerun()
+        else:
+            st.warning(
+                f"Only {len(available)} unused questions are available. "
+                f"Add at least {test_size - len(available)} more unique "
+                "questions before starting a 120-question test."
+            )
+
     else:
-        st.write(f"Total questions: {len(questions)}")
+        questions = st.session_state.current_set
 
-        with st.form("mock_test_form"):
-            answers = {}
+        if not st.session_state.submitted:
+            with st.form("mock_test_form"):
+                answers = {}
 
-            for i, q in enumerate(questions):
+                for i, q in enumerate(questions):
+                    st.markdown(
+                        f"**Q{i + 1}. [{q['topic']}] {q['question']}**"
+                    )
+
+                    choices = ["A", "B", "C", "D"]
+                    answers[q["id"]] = st.radio(
+                        "Choose your answer",
+                        choices,
+                        format_func=lambda letter, q=q: (
+                            f"{letter}. {q['options'][ord(letter) - 65]}"
+                        ),
+                        key=f"answer_{q['id']}",
+                        index=None
+                    )
+
+                submitted = st.form_submit_button("Submit Test")
+
+            if submitted:
+                result = []
+
+                for q in questions:
+                    chosen = answers[q["id"]]
+                    correct = q["answer"]
+
+                    if chosen is None:
+                        marks = 0
+                        status = "Unanswered"
+                    elif chosen == correct:
+                        marks = 1
+                        status = "Correct"
+                    else:
+                        marks = -0.33
+                        status = "Incorrect"
+
+                    result.append({
+                        "question": q,
+                        "chosen": chosen,
+                        "status": status,
+                        "marks": marks
+                    })
+
+                st.session_state.test_result = result
+                st.session_state.used_ids.extend(
+                    q["id"] for q in questions
+                )
+                st.session_state.submitted = True
+                st.rerun()
+
+        else:
+            result = st.session_state.get("test_result", [])
+
+            correct_count = sum(
+                item["status"] == "Correct" for item in result
+            )
+            wrong_count = sum(
+                item["status"] == "Incorrect" for item in result
+            )
+            blank_count = sum(
+                item["status"] == "Unanswered" for item in result
+            )
+            attempted = correct_count + wrong_count
+            score = sum(item["marks"] for item in result)
+            accuracy = (
+                correct_count / attempted * 100 if attempted else 0
+            )
+
+            st.subheader("📊 Test Analysis")
+            st.metric("Net Score", f"{score:.2f} / {len(result)}")
+            st.metric("Accuracy", f"{accuracy:.2f}%")
+            st.write(f"✅ Correct: {correct_count}")
+            st.write(f"❌ Incorrect: {wrong_count}")
+            st.write(f"⭕ Unanswered: {blank_count}")
+            st.write(f"📝 Attempted: {attempted}")
+
+            st.subheader("Answer Review")
+
+            for i, item in enumerate(result):
+                q = item["question"]
                 st.markdown(
                     f"**Q{i + 1}. {q['question']}**"
                 )
-
-                answers[i] = st.radio(
-                    "Choose one",
-                    ["A", "B", "C", "D"],
-                    format_func=lambda x, q=q: f"{x}. {q[x]}",
-                    key=f"mock_{i}",
-                    index=None
+                st.write(
+                    f"Your answer: {item['chosen'] or 'Not answered'}"
                 )
-
-            submitted = st.form_submit_button(
-                "Submit Mock Test"
-            )
-
-        if submitted:
-            score = sum(
-                answers[i] == q["answer"]
-                for i, q in enumerate(questions)
-            )
-
-            st.session_state.mock_score = score
-
-        if st.session_state.mock_score is not None:
-            score = st.session_state.mock_score
-
-            st.subheader(
-                f"Your Score: {score}/{len(questions)}"
-            )
-
-            for i, q in enumerate(questions):
-                st.markdown(
-                    f"**Q{i + 1}. {q['question']}**"
-                )
-
                 st.write(
                     f"Correct answer: {q['answer']}. "
-                    f"{q[q['answer']]}"
+                    f"{q['options'][ord(q['answer']) - 65]}"
                 )
+                st.write(f"Result: {item['status']}")
+                st.caption(f"Explanation: {q['explanation']}")
 
-                st.write(f"Explanation: {q['explanation']}")
-
-
-# ---------- FLASHCARDS ----------
+            if st.button("Prepare Next Set"):
+                st.session_state.current_set = []
+                st.session_state.submitted = False
+                st.rerun()
 
 elif page == "Flashcards":
     st.header("🗂️ Flashcards")
 
-    st.write("Create your own question-and-answer cards.")
-
-    with st.form("flashcard_form", clear_on_submit=True):
+    with st.form("add_flashcard", clear_on_submit=True):
         front = st.text_input("Question or term")
-        back = st.text_input("Answer or definition")
+        back = st.text_input("Answer")
+        add = st.form_submit_button("Add Flashcard")
 
-        add_card = st.form_submit_button("Add Flashcard")
-
-    if add_card:
+    if add:
         if front.strip() and back.strip():
             st.session_state.flashcards.append({
                 "front": front.strip(),
@@ -340,22 +277,8 @@ elif page == "Flashcards":
             })
             st.success("Flashcard added.")
         else:
-            st.warning("Enter both a question and an answer.")
+            st.warning("Enter both the question and answer.")
 
-    cards = st.session_state.flashcards
-
-    if cards:
-        st.write(f"Total flashcards: {len(cards)}")
-
-        for i, card in enumerate(cards):
-            with st.expander(
-                f"Card {i + 1}: {card['front']}"
-            ):
-                st.write(f"**Answer:** {card['back']}")
-
-        if st.button("Clear All Flashcards"):
-            st.session_state.flashcards = []
-            st.rerun()
-    else:
-        st.info("Your flashcards will appear here.")
-    
+    for i, card in enumerate(st.session_state.flashcards):
+        with st.expander(f"Card {i + 1}: {card['front']}"):
+            st.write(card["back"])
